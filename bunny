@@ -1,0 +1,135 @@
+#! /bin/bash
+#
+# Copyright (c) 2017-2018 ypsah
+# Licensed under MIT (https://github.com/ypsah/bunny/blob/master/LICENSE.txt)
+#
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+    *)
+        misc+=("$1")
+        ;;
+    esac
+    shift
+done
+
+declare -A TESTS
+declare -a SUITES
+
+for arg in "${misc[@]}"; do
+    if [[ "${arg##*/}" =~ : ]]; then
+        # test names cannot contain spaces => space can be used as a separator
+        TESTS["${arg%:*}"]+="${arg##*:} "
+    else
+        SUITES+=("$arg")
+    fi
+done
+
+function list_tests()
+{
+    for suite in "${!TESTS[@]}"; do
+        local tests
+        IFS=" " read -ra tests <<< "${TESTS[$suite]}"
+        printf "$suite:%s\\0" "${tests[@]}"
+    done
+
+    [ ${#SUITES[@]} -eq 0 ] && [ ${#TESTS[@]} -gt 0 ] && return 0
+
+    while IFS="" read -rd $'\0' suite; do
+        (
+            source "$suite"
+
+            local tests
+            mapfile -t tests < <(declare -F | cut -d' ' -f3 | grep "^test_")
+            printf "$suite:%s\\0" "${tests[@]}"
+        )
+    done < <(find "${SUITES[@]}" -path '*/.log' -prune -o -name "test_*" -print0)
+}
+
+# Declare some useful variables
+printf -v now "%(%T)T" "-1"
+declare -x now="${now//:/-}"
+
+here="$(readlink -m "${BASH_SOURCE[0]}")"
+declare -x harness="${here%/*}"/harness.sh
+
+function __test_run()
+{
+    local suite="${1%:*}"
+    local test="${1##*:}"
+
+    # Set up the log directory
+    local logfile
+    logfile="$(dirname "$suite")/.log/$now/$test.log"
+    mkdir -p "${logfile%/*}"
+    rm -f "$logfile"
+
+    # Run the test
+    (
+    local start_time=$SECONDS
+
+    source "$harness"
+    source "$suite"
+    declare -F setup >/dev/null && setup
+    ( "$test" )
+    case $? in
+        0)
+            local status=Passed
+            ;;
+        75)
+            local status=Skipped
+            ;;
+        *)
+            local status=Failed
+            ;;
+    esac
+
+    declare -F teardown > /dev/null && teardown
+    local end_time=$SECONDS
+
+    printf '\n%s in %i second' $status $((end_time - start_time))
+    [ $((end_time - start_time)) -gt 1 ] && printf "s"
+    printf '\n'
+    ) > "$logfile" 2>&1
+}
+export -f __test_run
+
+# Run tests
+list_tests | xargs -0 -I{} -P "$(nproc)" \
+    bash -c ' __test_run "$1"' -- "{}"
+
+declare -i total=0 skipped=0 failures=0
+function __test_report()
+{
+    local suite="${1%:*}"
+    local test="${1##*:}"
+    local logfile
+    logfile="$(dirname "$suite")/.log/$now/$test.log"
+
+    printf '%s\n' "${suite#./}:$test"
+    printf '%80s\n' "" | tr ' ' '-'
+    cat "$logfile"
+    printf '\n\n'
+
+    case "$(tail -n 1 "$logfile" | cut -d" " -f1)" in
+        Failed)
+            failures+=1
+            ;;
+        Skipped)
+            skipped+=1
+            ;;
+    esac
+    total+=1
+}
+
+# Generate the report
+while IFS="" read -rd $'\0' test_name; do
+    __test_report "$test_name"
+done < <(list_tests)
+
+printf "Ran %i tests: %i passed" $total $((total - failures - skipped))
+[ $skipped -gt 0 ] && printf ", %i skipped" $skipped
+[ $failures -gt 0 ] && printf ", %i failed" $failures
+printf '\n'
+
+[ $failures -eq 0 ]
