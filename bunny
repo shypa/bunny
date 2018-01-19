@@ -66,7 +66,9 @@ function __test_run()
 
     # Run the test
     (
-    local start_time=$SECONDS
+    local -i start nano_start end nano_end
+    local nano_elapsed
+    IFS=" " read -r start nano_start <<< "$(date '+%s %-N')"
 
     source "$harness"
     source "$suite"
@@ -85,11 +87,15 @@ function __test_run()
     esac
 
     declare -F teardown > /dev/null && teardown
-    local end_time=$SECONDS
+    IFS=" " read -r end nano_end <<< "$(date '+%s %-N')"
+    if ((nano_end < nano_start)) ||
+        { ((nano_end == nano_start)) && ((end > start)); }; then
+        nano_end+=1000000000
+        ((end--))
+    fi
+    printf -v nano_elapsed '%0.9i' $((nano_end - nano_start))
 
-    printf '\n%s in %i second' $status $((end_time - start_time))
-    [ $((end_time - start_time)) -gt 1 ] && printf "s"
-    printf '\n'
+    printf '\n%s in %i.%ss\n' $status "$((end - start))" "${nano_elapsed:0:3}"
     ) > "$logfile" 2>&1
 }
 export -f __test_run
