@@ -188,3 +188,29 @@ function stack_trap()
 
     eval "${newtrap%\' $sigspec}${oldtrap:-"' $sigspec"}"
 }
+
+function assert_completes()
+{
+    local pid="$1"
+    local -i timeout=${timeout:-1} # seconds
+    local -i deadline=$((SECONDS + timeout))
+    local -i tempo=10000 # milliseconds
+    local -i max_tempo=$((timeout / 10))
+
+    local cmd
+    cmd="$(ps --no-header -o args "$pid")"
+
+    while true; do
+        kill -0 "$pid" 2>/dev/null || return 0
+        if ((SECONDS > deadline)); then
+           break
+        elif ((SECONDS + tempo / 1000000 > deadline)); then
+            usleep $((deadline - SECONDS))
+        else
+            usleep $tempo
+            ((tempo < max_tempo)) && ((tempo += tempo))
+        fi
+    done
+
+    assert_error "'%s' did not complete in '%i' seconds" "$cmd" "$timeout"
+}

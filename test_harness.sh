@@ -218,3 +218,13 @@ test_not_empty_directory()
 
     assert_not_empty_directory "$directory"
 }
+
+test_completes()
+{
+    sleep 1 &
+
+    ( timeout=0 assert_completes $! )
+    [ $? -eq 1 ] || exit 1
+
+    assert_completes $!
+}
