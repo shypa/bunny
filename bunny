@@ -43,7 +43,8 @@ function list_tests()
             mapfile -t tests < <(declare -F | cut -d' ' -f3 | grep "^test_")
             printf "$suite:%s\\0" "${tests[@]}"
         )
-    done < <(find "${SUITES[@]}" -path '*/.log' -prune -o -name "test_*" -print0)
+    done < <(find "${SUITES[@]}" -path '*/.log' -prune \
+                              -o -type f -name "test*" -print0)
 }
 
 # Declare some useful variables
