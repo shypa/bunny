@@ -4,10 +4,41 @@
 # Licensed under MIT (https://github.com/ypsah/bunny/blob/master/LICENSE.txt)
 #
 
+function usage()
+{
+    printf 'usage: %s [-h] [--] [SUITE[:TEST] ...]
+
+Discover and/or run a list of tests and test suites
+
+Optional arguments:
+    -h, --help  Display this message
+
+Positionnal arguments:
+    SUITE       The name of a test suite (the path to the bash source file)
+    TEST        The name of a test in the SUITE it is prefixed by
+' "${BASH_SOURCE[0]##*/}"
+}
+
 while [ $# -gt 0 ]; do
+    if [ "${1:0:1}" == '-' ] && [ "${1:1:1}" != '-' ] && [ ${#1} -gt 2 ]; then
+        set -- "${1:0:2}" "-${1:2}" "${@:2}"
+    fi
     case "$1" in
+    -h|--help)
+        usage
+        exit 0
+        ;;
+    -[^-]|--?*)
+        usage
+        printf '\n'
+        printf 'unknown option %s\n' "$1"
+        exit 64
+        ;;
+    --)
+        shift
+        ;&
     *)
-        misc+=("$1")
+        break
         ;;
     esac
     shift
@@ -16,7 +47,7 @@ done
 declare -A TESTS
 declare -a SUITES
 
-for arg in "${misc[@]}"; do
+for arg; do
     if [[ "${arg##*/}" =~ : ]]; then
         # test names cannot contain spaces => space can be used as a separator
         TESTS["${arg%:*}"]+="${arg##*:} "
