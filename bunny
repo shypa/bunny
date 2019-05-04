@@ -4,7 +4,186 @@
 # Licensed under MIT (https://github.com/ypsah/bunny/blob/master/LICENSE.txt)
 #
 
-function usage()
+PROGNAME="${BASH_SOURCE[0]##*/}"
+
+################################################################################
+#                                Configuration                                 #
+################################################################################
+
+# This is the pattern used to identify test suites and tests functions
+declare -x TEST_PATTERN='^test_'
+
+################################################################################
+#                                  Utilities                                   #
+################################################################################
+
+# List test functions in the current scope
+#
+# Example: (source "path/to/test_suite.sh"; list_tests)
+list_tests()
+{
+    declare -F | cut -d' ' -f3 | grep "$TEST_PATTERN"
+}
+
+# Compute the path to a logging directory for a given test suite
+#
+# usage: logdir SUITE
+#
+# Positional parameter:
+#   SUITE   path to a test suite
+#
+# The computed path is garanteed to be unique to the current run
+logdir()
+{
+    printf '%s/.log/%s/%s' "$(dirname "$1")" "$run_id" "${1##*/}"
+}
+
+# Compute a timedelta between two timestamps
+#
+# usage: elapsed START END
+#
+# Positional parameters:
+#   START   the start timestamp
+#   END     the end timestamp
+#
+# Timestamps may either be integer of decimals (maximum precision: 1ns)
+# The result is truncated with a millisecond precision.
+elapsed()
+{
+    local -i start="${1%.*}" end="${2%.*}"
+    local nano_start="${1#"$start"}" nano_end="${2#"$end"}"
+    nano_start="${nano_start#.}" nano_end="${nano_end#.}"
+
+    ((nano_end < nano_start)) && ((nano_end+=1000000000, end--))
+
+    local nano_elapsed
+    printf -v nano_elapsed '%0.9i' $((nano_end - nano_start))
+
+    printf '%i.%s' $((end - start)) "${nano_elapsed:0:3}"
+}
+
+# Run a single test
+#
+# usage: run_test TEST
+#
+# Position parameter:
+#   TEST    the name of a test function (must be available in the current scope)
+run_test()
+{
+    local -i start end nano_start nano_end
+
+    printf -v start '%(%s)T' -1
+    nano_start="$(date '+%-N')"
+
+    (
+    declare -F teardown >/dev/null && trap -- "teardown" EXIT
+    if declare -F setup >/dev/null; then
+        setup || exit
+    fi
+
+    # Hide bunny's trap handlers and run the test
+    (trap EXIT; "$1")
+    )
+
+    case $? in
+    0)
+        local status=Passed
+        ;;
+    75)
+        local status=Skipped
+        ;;
+    *)
+        local status=Failed
+        ;;
+    esac
+
+    printf -v end '%(%s)T' -1
+    nano_end="$(date '+%-N')"
+
+    printf '\n%s in ' "$status"
+    elapsed "$start.$nano_start" "$end.$nano_end"
+    printf 's\n'
+}
+
+# Run a set of tests
+#
+# usage: run_suite SUITE [TEST [...]]
+#
+# Positional parameter:
+#   SUITE   path to a test suite
+#   TEST    name of a test function in SUITE
+#
+# If no TEST is provided, every test function in SUITE will be run
+run_suite()
+{
+    local suite="$1"
+    local -a tests=("${@:2}")
+
+    [ -f "${suite#"$'\0'"}" ] || printf "%s: no such file or directory\n" "$suite"
+    source "$suite" || return
+    [[ ${#tests[@]} -eq 0 ]] && mapfile -t tests < <(list_tests)
+
+    local logdir
+    logdir="$(logdir "$suite")"
+
+    mkdir -p "${logdir%/*}" || return
+    mkdir "$logdir" || return
+
+    (
+    source "$harness"
+
+    declare -F suite_teardown >/dev/null && trap -- "suite_teardown" EXIT
+    if declare -F suite_setup >/dev/null; then
+        suite_setup || exit
+    fi
+
+    local test_
+    for test_ in "${tests[@]}"; do
+        run_test "$test_" &> "$logdir"/"$test_".log || exit
+    done
+    )
+}
+
+# Print the summary of a test suite run
+#
+# usage: report SUITE
+#
+# Positional argument:
+#   SUITE   path to a test suite
+function report()
+{
+    local suite="$1"
+
+    local logdir logfile
+    logdir="$(logdir "$suite")"
+
+    shopt -s nullglob
+    for logfile in "$logdir"/*.log; do
+        local test_="${logfile##*/}"
+        test_="${test_%.log}"
+
+        printf '%s\n' "${suite#./}:$test_"
+        printf '%80s\n' "" | tr ' ' '-'
+        cat "$logfile"
+        printf '\n\n'
+
+        case "$(tail -n 1 "$logfile" | cut -d" " -f1)" in
+        Failed)
+            failed+=1
+            ;;
+        Skipped)
+            skipped+=1
+            ;;
+        esac
+        total+=1
+    done
+}
+
+################################################################################
+#                                     CLI                                      #
+################################################################################
+
+usage()
 {
     printf 'usage: %s [-h] [--] [SUITE[:TEST] ...]
 
@@ -44,130 +223,71 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-declare -A TESTS
-declare -a SUITES
+# `tests' is indexed with names of test suites and its values are
+# space-separated test names.
+#
+# Note that space can be use as a separator because the test names are actually
+# shell function names, which cannot contain spaces.
+declare -A tests
 
+# Perform only minimal checks of the arguments. The rest of the program will
+# fail with meaningful error message anyway.
 for arg; do
-    if [[ "${arg##*/}" =~ : ]]; then
-        # test names cannot contain spaces => space can be used as a separator
-        TESTS["${arg%:*}"]+="${arg##*:} "
-    else
-        SUITES+=("$arg")
+    if [[ -e $arg ]]; then
+        # `arg' is test suite
+        tests["$arg"]=
+        continue
     fi
+
+    # `arg' is SUITE:TEST
+    suite="${arg%:*}"
+    test_="${arg##*:}"
+
+    # If the whole suite is already included, skip this argument
+    [[ -v tests[$suite] ]] && [[ -z tests[$suite] ]] && continue
+
+    # If the test appears twice on the command line, it will be run twice
+    # unless the test suite appears by itself later on the command line.
+    tests[$suite]+="$test_ "
 done
 
-function list_tests()
-{
-    for suite in "${!TESTS[@]}"; do
-        local tests
-        IFS=" " read -ra tests <<< "${TESTS[$suite]}"
-        printf "$suite:%s\\0" "${tests[@]}"
-    done
+# Test suite discoverer
+if [[ ${#tests[@]} -eq 0 ]]; then
+    while IFS='' read -rd $'\0' suite; do
+        tests[$suite]=
+    done < <(find . -name '.log' -prune \
+                 -o -type f -name "${TEST_PATTERN#^}"'*' -print0)
+fi
 
-    [ ${#SUITES[@]} -eq 0 ] && [ ${#TESTS[@]} -gt 0 ] && return 0
+################################################################################
+#                                    Main                                      #
+################################################################################
 
-    while IFS="" read -rd $'\0' suite; do
-        (
-            source "$suite"
+# Export information for run_suite() and run_test()
+printf -v run_id '%(%H-%M-%S)T-%s' -1 "$(uuidgen)"
+declare -x run_id
 
-            local tests
-            mapfile -t tests < <(declare -F | cut -d' ' -f3 | grep "^test_")
-            printf "$suite:%s\\0" "${tests[@]}"
-        )
-    done < <(find "${SUITES[@]}" -path '*/.log' -prune \
-                              -o -type f -name "test*" -print0)
-}
+here="$(dirname "$(readlink -m "${BASH_SOURCE[0]}")")"
+declare -x harness="$here"/harness.sh
 
-# Declare some useful variables
-printf -v now "%(%T)T" "-1"
-declare -x now="${now//:/-}"
-
-here="$(readlink -m "${BASH_SOURCE[0]}")"
-declare -x harness="${here%/*}"/harness.sh
-
-function __test_run()
-{
-    local suite="${1%:*}"
-    local test="${1##*:}"
-
-    # Set up the log directory
-    local logfile
-    logfile="$(dirname "$suite")/.log/$now/$test.log"
-    mkdir -p "${logfile%/*}"
-    rm -f "$logfile"
-
-    # Run the test
-    (
-    local -i start nano_start end nano_end
-    local nano_elapsed
-    IFS=" " read -r start nano_start <<< "$(date '+%s %-N')"
-
-    source "$harness"
-    source "$suite"
-    declare -F setup >/dev/null && setup
-    ( "$test" )
-    case $? in
-        0)
-            local status=Passed
-            ;;
-        75)
-            local status=Skipped
-            ;;
-        *)
-            local status=Failed
-            ;;
-    esac
-
-    declare -F teardown > /dev/null && teardown
-    IFS=" " read -r end nano_end <<< "$(date '+%s %-N')"
-    if ((nano_end < nano_start)) ||
-        { ((nano_end == nano_start)) && ((end > start)); }; then
-        nano_end+=1000000000
-        ((end--))
-    fi
-    printf -v nano_elapsed '%0.9i' $((nano_end - nano_start))
-
-    printf '\n%s in %i.%ss\n' $status "$((end - start))" "${nano_elapsed:0:3}"
-    ) > "$logfile" 2>&1
-}
-export -f __test_run
+export -f list_tests logdir elapsed run_test run_suite
 
 # Run tests
-list_tests | xargs -0 -I{} -P "$(nproc)" \
-    bash -c ' __test_run "$1"' -- "{}"
+for suite in "${!tests[@]}"; do
+    printf '%q %s\0' "$suite" "${tests[$suite]}"
+done | xargs -0 -L 1 -r -P "$(nproc)" bash -c 'run_suite $@' bash
 
-declare -i total=0 skipped=0 failures=0
-function __test_report()
-{
-    local suite="${1%:*}"
-    local test="${1##*:}"
-    local logfile
-    logfile="$(dirname "$suite")/.log/$now/$test.log"
+# Generate a report for each test suite
+declare -i total skipped failed
+for suite in "${!tests[@]}"; do
+    report "$suite"
+done
 
-    printf '%s\n' "${suite#./}:$test"
-    printf '%80s\n' "" | tr ' ' '-'
-    cat "$logfile"
-    printf '\n\n'
-
-    case "$(tail -n 1 "$logfile" | cut -d" " -f1)" in
-        Failed)
-            failures+=1
-            ;;
-        Skipped)
-            skipped+=1
-            ;;
-    esac
-    total+=1
-}
-
-# Generate the report
-while IFS="" read -rd $'\0' test_name; do
-    __test_report "$test_name"
-done < <(list_tests)
-
-printf "Ran %i tests: %i passed" $total $((total - failures - skipped))
-[ $skipped -gt 0 ] && printf ", %i skipped" $skipped
-[ $failures -gt 0 ] && printf ", %i failed" $failures
+# Print a short summary line
+printf "Ran %i tests" $total
+[[ $total -gt 0 ]] && printf ': %i passed' $((total - failed - skipped))
+[[ $skipped -gt 0 ]] && printf ', %i skipped' $skipped
+[[ $failed -gt 0 ]] && printf ', %i failed' $failed
 printf '\n'
 
-[ $failures -eq 0 ]
+[[ $failed -eq 0 ]]

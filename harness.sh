@@ -28,11 +28,18 @@ function assert_error()
     shift
 
     printf "assertion error: $message\n" "$@" >&2
-
-    local -i i=2
     printf "from: " >&2
-    while ((i < ${#BASH_SOURCE[@]} - 1)); do
-        [ $i -gt 2 ] && printf "%6s" ""
+
+    # Hide the harness' call stack
+    local -i i=1
+    while [[ ${BASH_SOURCE[i]} == ${BASH_SOURCE[0]} ]]; do
+        i+=1
+    done
+
+    local first=true
+    # Hide the last two levels of calls (they are reserved to bunny)
+    while ((i < ${#BASH_SOURCE[@]} - 2)); do
+        $first && first=false || printf "%6s" ""
         printf "l.%i " "${BASH_LINENO[i-1]}" >&2
         printf "%s: " "${BASH_SOURCE[i]}" >&2
         printf "%s\n" "${FUNCNAME[i]}" >&2
