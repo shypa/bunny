@@ -185,7 +185,7 @@ function report()
 
 usage()
 {
-    printf 'usage: %s [-h] [--] [SUITE[:TEST] ...]
+    printf 'usage: %s [-h] [--] [DIRECTORY] [SUITE[:TEST] ...]
 
 Discover and/or run a list of tests and test suites
 
@@ -193,9 +193,13 @@ Optional arguments:
     -h, --help  Display this message
 
 Positionnal arguments:
+    DIRECTORY   A directory under which to look for test suites
     SUITE       The name of a test suite (the path to the bash source file)
     TEST        The name of a test in the SUITE it is prefixed by
-' "${BASH_SOURCE[0]##*/}"
+
+If neither a DIRECTORY nor a SUITE is provided %s will look for tests under the
+current directory.
+' "$PROGNAME" "$PROGNAME"
 }
 
 while [ $# -gt 0 ]; do
@@ -229,10 +233,16 @@ done
 # Note that space can be use as a separator because the test names are actually
 # shell function names, which cannot contain spaces.
 declare -A tests
+declare -a test_directories
 
 # Perform only minimal checks of the arguments. The rest of the program will
 # fail with meaningful error message anyway.
 for arg; do
+    if [[ -d $arg ]]; then
+        test_directories+=("$arg")
+        continue
+    fi
+
     if [[ -e $arg ]]; then
         # `arg' is test suite
         tests["$arg"]=
@@ -252,10 +262,10 @@ for arg; do
 done
 
 # Test suite discoverer
-if [[ ${#tests[@]} -eq 0 ]]; then
+if [[ ${#test_directories[@]} -gt 0 ]] || [[ ${#tests[@]} -eq 0 ]]; then
     while IFS='' read -rd $'\0' suite; do
         tests[$suite]=
-    done < <(find . -name '.log' -prune \
+    done < <(find "${test_directories[@]:-.}" -name '.log' -prune \
                  -o -type f -name "${TEST_PATTERN#^}"'*' -print0)
 fi
 
