@@ -1,0 +1,30 @@
+#! /bin/bash
+#
+# Copyright (c) 2017-2018 ypsah
+# Licensed under MIT (https://github.com/ypsah/bunny/blob/master/LICENSE.txt)
+#
+
+_list_tests()
+{
+    source "$1" 2>/dev/null || return
+    declare -F | cut -d' ' -f3 | grep "${TEST_PATTERN:-^test_}"
+}
+
+_bunny()
+{
+    local cur prev words cword
+    _init_completion
+
+    _filedir
+    [[ ${#COMPREPLY[@]} -gt 0 ]] && compopt -o nospace
+
+    [[ $cur =~ : ]] && local suite="${cur%\\:*}" test_="${cur##*:}"
+    COMPREPLY+=(
+        $(compgen -P "$suite"\\: -W '$(_list_tests "$suite")' -- "$test_")
+    )
+
+    [[ -f $cur ]] && [[ ${#COMPREPLY[@]} -eq 1 ]] &&
+        COMPREPLY=($(compgen -P "$cur" -W :))
+}
+
+complete -F _bunny bunny
