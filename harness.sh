@@ -36,9 +36,20 @@ function assert_error()
         i+=1
     done
 
+    # Starting from bash-4.4 functions from the environment appear on the call
+    # stack. In such cases, hide bunny's internal calls as they are not relevant
+    # to diagnose a test failure.
+    local -i stack_depth=${#BASH_SOURCE[@]}
+    # Bunny's internals are the last functions in the call stack, and their
+    # source is named 'environment'. It is assumed nobody will ever name a test
+    # suite 'environment', and as such, can be used to discriminate internals
+    # from actual user-defined functions.
+    while [[ ${BASH_SOURCE[$stack_depth - 1]} == environment ]]; do
+        ((stack_depth -= 1))
+    done
+
     local first=true
-    # Hide the last two levels of calls (they are reserved to bunny)
-    while ((i < ${#BASH_SOURCE[@]} - 2)); do
+    while ((i < stack_depth)); do
         $first && first=false || printf "%6s" ""
         printf "l.%i " "${BASH_LINENO[i-1]}" >&2
         printf "%s: " "${BASH_SOURCE[i]}" >&2
