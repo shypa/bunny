@@ -32,7 +32,7 @@ function assert_error()
 
     # Hide the harness' call stack
     local -i i=1
-    while [[ ${BASH_SOURCE[i]} == ${BASH_SOURCE[0]} ]]; do
+    while [[ ${BASH_SOURCE[i]} == "${BASH_SOURCE[0]}" ]]; do
         i+=1
     done
 
