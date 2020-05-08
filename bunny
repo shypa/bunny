@@ -250,7 +250,7 @@ declare -A tests
 declare -a test_directories
 
 # Perform only minimal checks of the arguments. The rest of the program will
-# fail with meaningful error message anyway.
+# fail with meaningful error messages anyway.
 for arg; do
     if [[ -d $arg ]]; then
         test_directories+=("$arg")
@@ -268,7 +268,7 @@ for arg; do
     test_="${arg##*:}"
 
     # If the whole suite is already included, skip this argument
-    [[ -v tests[$suite] ]] && [[ -z tests[$suite] ]] && continue
+    [[ -v tests[$suite] ]] && [[ -z ${tests[$suite]} ]] && continue
 
     # If the test appears twice on the command line, it will be run twice
     # unless the test suite appears by itself later on the command line.
