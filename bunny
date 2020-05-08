@@ -133,7 +133,7 @@ run_suite()
     local suite="$1"
     local -a tests=("${@:2}")
 
-    [ -f "${suite#"$'\0'"}" ] || printf "%s: no such file or directory\n" "$suite"
+    [ -f "$suite" ] || printf "%s: no such file or directory\n" "$suite"
     source "$suite" || return
     [[ ${#tests[@]} -eq 0 ]] && mapfile -t tests < <(list_tests)
 
