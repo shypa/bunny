@@ -212,8 +212,8 @@ function assert_completes()
     local pid="$1"
     local -i timeout=${timeout:-1} # seconds
     local -i deadline=$((SECONDS + timeout))
-    local -i tempo=10000 # microseconds
-    local -i max_tempo=$((timeout * 1000000 / 10))
+    local -i tempo=10 # milliseconds
+    local -i max_tempo=$((timeout * 1000 / 10))
 
     local cmd
     cmd="$(ps --no-header -o args "$pid")"
@@ -225,7 +225,7 @@ function assert_completes()
         elif ((SECONDS + tempo / 1000000 > deadline)); then
             sleep $((deadline - SECONDS))
         else
-            usleep $tempo
+            sleep $((tempo / 1000)).$((tempo % 1000))s
             ((tempo < max_tempo)) && ((tempo += tempo))
         fi
     done
