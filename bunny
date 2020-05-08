@@ -43,21 +43,34 @@ logdir()
 # usage: elapsed START END
 #
 # Positional parameters:
-#   START   the start timestamp
-#   END     the end timestamp
+#   START       the start timestamp
+#   END         the end timestamp
 #
-# Timestamps may either be integer of decimals (maximum precision: 1ns)
+# Timestamps may either be integers or decimals (maximum precision: 1ns)
 # The result is truncated with a millisecond precision.
 elapsed()
 {
-    local -i start="${1%.*}" end="${2%.*}"
-    local nano_start="${1#"$start"}" nano_end="${2#"$end"}"
-    nano_start="${nano_start#.}" nano_end="${nano_end#.}"
+    local -i start nano_start end nano_end
+    local decimal
+
+    shopt -s extglob
+    IFS="." read -r start decimal <<< "$1"
+    decimal+="000000000"
+    decimal="${decimal:0:9}"
+    nano_start=${decimal##+(0)}
+
+    IFS="." read -r end decimal <<< "$2"
+    decimal+="000000000"
+    decimal="${decimal:0:9}"
+    nano_end="${decimal##+(0)}"
+
+    # Sanity check START must be greater or equal to END
+    ((start < end)) || ((start == end && nano_start < nano_end)) || return 1
 
     ((nano_end < nano_start)) && ((nano_end+=1000000000, end--))
 
     local nano_elapsed
-    printf -v nano_elapsed '%0.9i' $((nano_end - nano_start))
+    printf -v nano_elapsed '%09i' $((nano_end - nano_start))
 
     printf '%i.%s' $((end - start)) "${nano_elapsed:0:3}"
 }
@@ -70,7 +83,8 @@ elapsed()
 #   TEST    the name of a test function (must be available in the current scope)
 run_test()
 {
-    local -i start end nano_start nano_end
+    local -i start end
+    local nano_start nano_end
 
     printf -v start '%(%s)T' -1
     nano_start="$(date '+%-N')"
