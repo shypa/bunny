@@ -66,7 +66,7 @@ function assert_true()
 
 function assert_false()
 {
-    "$@" && assert_error "'%s' did not fail" "$*"
+    "$@" && assert_error "'%s' did not fail" "$*" || true
 }
 
 function assert_equal()
